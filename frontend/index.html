@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="theme-color" content="#060b12"/>
+<title>SCAN3D — Point Cloud Generator</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#060b12;--surf:#0d1721;--panel:#111e2b;--brd:#1a2f47;
+  --acc:#00e5ff;--acc2:#7c3aff;--grn:#00ff9d;--red:#ff3d6e;
+  --txt:#bdd8ef;--muted:#3d5a73;
+  --font:'Courier New',monospace;--ui:'Segoe UI',system-ui,sans-serif;
+}
+html,body{height:100%;background:var(--bg);color:var(--txt);font-family:var(--ui);overflow:hidden}
+
+/* ── LAYOUT ── */
+#app{display:grid;grid-template-columns:320px 1fr;grid-template-rows:52px 1fr 28px;height:100vh}
+
+/* ── HEADER ── */
+header{
+  grid-column:1/-1;display:flex;align-items:center;gap:14px;
+  padding:0 20px;background:var(--surf);border-bottom:1px solid var(--brd);
+  position:relative;overflow:hidden;
+}
+header::after{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(90deg,rgba(0,229,255,.07),transparent 55%);
+  pointer-events:none;
+}
+.logo{font-family:var(--font);font-size:17px;font-weight:bold;letter-spacing:4px;
+  color:var(--acc);text-shadow:0 0 18px rgba(0,229,255,.5)}
+.logo b{color:var(--acc2)}
+.sub{font-family:var(--font);font-size:9px;color:var(--muted);letter-spacing:2px}
+.api-row{margin-left:auto;display:flex;align-items:center;gap:7px;
+  font-family:var(--font);font-size:10px;color:var(--muted)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--muted)}
+.dot.ok{background:var(--grn);box-shadow:0 0 7px var(--grn)}
+.dot.err{background:var(--red);box-shadow:0 0 7px var(--red)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.dot.ok{animation:blink 2.5s infinite}
+
+/* ── SIDEBAR ── */
+#side{
+  background:var(--surf);border-right:1px solid var(--brd);
+  display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;
+}
+.sec{padding:14px;border-bottom:1px solid var(--brd)}
+.sec-title{
+  font-family:var(--font);font-size:9px;letter-spacing:3px;
+  color:var(--muted);text-transform:uppercase;margin-bottom:10px;
+  display:flex;align-items:center;gap:8px;
+}
+.sec-title::after{content:'';flex:1;height:1px;background:var(--brd)}
+
+/* ── CAMERA ── */
+#cam-wrap{
+  position:relative;border-radius:5px;overflow:hidden;
+  background:#000;aspect-ratio:4/3;border:1px solid var(--brd);
+}
+#video{width:100%;height:100%;object-fit:cover;display:block}
+#cam-ph{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:8px;
+  color:var(--muted);font-family:var(--font);font-size:10px;
+}
+.corners{position:absolute;inset:0;pointer-events:none}
+.corners svg{width:100%;height:100%}
+#frame-badge{
+  position:absolute;top:7px;right:7px;
+  background:rgba(6,11,18,.85);border:1px solid var(--brd);
+  border-radius:3px;padding:2px 7px;
+  font-family:var(--font);font-size:10px;color:var(--acc);
+  display:none;backdrop-filter:blur(4px);
+}
+@keyframes scanline{0%{top:0;opacity:.7}100%{top:100%;opacity:.2}}
+#scanline{
+  position:absolute;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--acc),transparent);
+  animation:scanline 2s linear infinite;display:none;
+}
+
+/* ── BUTTONS ── */
+.btn{
+  display:flex;align-items:center;justify-content:center;gap:5px;
+  width:100%;padding:9px 12px;border:1px solid var(--brd);border-radius:4px;
+  background:var(--panel);color:var(--txt);font-family:var(--font);
+  font-size:11px;letter-spacing:1px;cursor:pointer;
+  transition:all .15s;text-transform:uppercase;
+}
+.btn:hover:not(:disabled){border-color:var(--acc);color:var(--acc);background:rgba(0,229,255,.05);box-shadow:0 0 10px rgba(0,229,255,.12)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.pri{border-color:var(--acc);color:var(--acc);background:rgba(0,229,255,.07)}
+.btn.danger{border-color:var(--red);color:var(--red)}
+.btn.success{border-color:var(--grn);color:var(--grn)}
+.brow{display:flex;gap:7px;margin-top:8px}.brow .btn{flex:1}
+
+/* ── FIELDS ── */
+.field{margin-bottom:9px}
+.field label{display:block;font-family:var(--font);font-size:9px;letter-spacing:1px;color:var(--muted);margin-bottom:4px;text-transform:uppercase}
+.frow{display:flex;justify-content:space-between;align-items:center}
+.val{font-family:var(--font);font-size:11px;color:var(--acc);min-width:38px;text-align:right}
+input[type=range]{width:100%;accent-color:var(--acc)}
+select{
+  width:100%;padding:6px 9px;background:var(--panel);
+  border:1px solid var(--brd);border-radius:4px;
+  color:var(--txt);font-family:var(--font);font-size:10px;
+}
+
+/* ── DROP ZONE ── */
+#drop{
+  border:2px dashed var(--brd);border-radius:5px;padding:18px;
+  text-align:center;cursor:pointer;transition:all .2s;
+  font-family:var(--font);font-size:10px;color:var(--muted);letter-spacing:1px;
+}
+#drop:hover,#drop.over{border-color:var(--acc);background:rgba(0,229,255,.04);color:var(--acc)}
+#file-in{display:none}
+#thumbs{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:4px;
+  margin-top:8px;max-height:110px;overflow-y:auto;
+}
+.thumb{aspect-ratio:1;border-radius:3px;overflow:hidden;border:1px solid var(--brd);position:relative}
+.thumb img{width:100%;height:100%;object-fit:cover}
+.tdel{
+  position:absolute;top:1px;right:1px;background:rgba(6,11,18,.85);
+  border:none;border-radius:2px;color:var(--red);font-size:8px;
+  cursor:pointer;padding:1px 3px;display:none;
+}
+.thumb:hover .tdel{display:block}
+
+/* ── PROGRESS ── */
+#prog-wrap{margin-top:10px;display:none}
+.pbar-bg{height:3px;background:var(--brd);border-radius:2px;overflow:hidden}
+#pbar{
+  height:100%;background:linear-gradient(90deg,var(--acc2),var(--acc));
+  width:0%;transition:width .4s ease;border-radius:2px;
+  box-shadow:0 0 8px rgba(0,229,255,.35);
+}
+#plabel{font-family:var(--font);font-size:9px;color:var(--muted);margin-top:5px;letter-spacing:1px}
+
+/* ── STATS ── */
+#stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;display:none}
+.sc{background:var(--panel);border:1px solid var(--brd);border-radius:4px;padding:7px 9px}
+.sl{font-family:var(--font);font-size:8px;letter-spacing:2px;color:var(--muted);text-transform:uppercase}
+.sv{font-family:var(--font);font-size:15px;color:var(--acc);font-weight:bold;margin-top:1px}
+.sv.g{color:var(--grn);font-size:11px}
+
+/* ── LOG ── */
+#logbox{
+  background:#020508;border:1px solid var(--brd);border-radius:4px;
+  padding:7px;font-family:var(--font);font-size:9px;color:var(--muted);
+  height:75px;overflow-y:auto;line-height:1.7;
+}
+.lok{color:var(--grn)}.lwarn{color:#f5a623}.lerr{color:var(--red)}.linfo{color:var(--acc)}
+
+/* ── VIEWPORT ── */
+#vp{
+  position:relative;overflow:hidden;
+  background:radial-gradient(ellipse at 30% 40%,#050f1a 0%,#020508 100%);
+}
+#vp::before{
+  content:'';position:absolute;inset:0;pointer-events:none;
+  background-image:
+    linear-gradient(rgba(26,47,71,.12) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(26,47,71,.12) 1px,transparent 1px);
+  background-size:36px 36px;
+}
+#cv{width:100%;height:100%;display:block}
+
+#hint{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:10px;pointer-events:none;
+}
+.hicon{width:72px;height:72px;opacity:.1}
+.htxt{font-family:var(--font);font-size:11px;color:var(--muted);letter-spacing:3px;text-transform:uppercase;opacity:.5}
+.hsub{font-family:var(--font);font-size:8px;color:var(--muted);letter-spacing:2px;opacity:.3}
+
+.hud{position:absolute;font-family:var(--font);font-size:9px;color:var(--muted);letter-spacing:1px;pointer-events:none}
+#htl{top:12px;left:14px}#htr{top:12px;right:14px;text-align:right}#hbl{bottom:12px;left:14px}
+.hline{line-height:1.9}.hv{color:var(--acc)}
+
+#vtb{
+  position:absolute;bottom:16px;left:50%;transform:translateX(-50%);
+  display:flex;gap:6px;background:rgba(13,23,33,.88);
+  border:1px solid var(--brd);border-radius:7px;padding:7px 10px;backdrop-filter:blur(8px);
+}
+.tb{
+  padding:5px 12px;background:transparent;border:1px solid var(--brd);border-radius:3px;
+  color:var(--muted);font-family:var(--font);font-size:9px;letter-spacing:1px;
+  cursor:pointer;transition:all .15s;text-transform:uppercase;
+}
+.tb:hover,.tb.on{border-color:var(--acc);color:var(--acc);background:rgba(0,229,255,.06)}
+
+/* ── STATUS BAR ── */
+#sb{
+  grid-column:1/-1;background:var(--surf);border-top:1px solid var(--brd);
+  display:flex;align-items:center;padding:0 14px;gap:20px;
+  font-family:var(--font);font-size:9px;color:var(--muted);letter-spacing:1px;
+}
+.si{display:flex;align-items:center;gap:5px}
+.si .d{width:5px;height:5px;border-radius:50%;background:var(--muted)}
+.si.ok .d{background:var(--grn)}.si.warn .d{background:#f5a623}
+
+::-webkit-scrollbar{width:3px}
+::-webkit-scrollbar-thumb{background:var(--brd);border-radius:2px}
+@keyframes fi{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+.fi{animation:fi .25s ease forwards}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- HEADER -->
+<header>
+  <div class="logo">SCAN<b>3D</b></div>
+  <div class="sub">// POINT CLOUD GENERATOR — MVP</div>
+  <div class="api-row">
+    <div class="dot" id="apidot"></div>
+    <span id="apistat">CONNECTING...</span>
+  </div>
+</header>
+
+<!-- SIDEBAR -->
+<div id="side">
+
+  <!-- Camera -->
+  <div class="sec">
+    <div class="sec-title">Camera</div>
+    <div id="cam-wrap">
+      <video id="video" autoplay playsinline muted></video>
+      <div id="cam-ph">
+        <svg viewBox="0 0 40 40" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".4">
+          <rect x="2" y="9" width="36" height="24" rx="3"/>
+          <circle cx="20" cy="21" r="7"/>
+          <path d="M13 9l2.5-5h9l2.5 5"/>
+        </svg>
+        <span>CAMÉRA INACTIVE</span>
+      </div>
+      <div class="corners"><svg viewBox="0 0 100 75" preserveAspectRatio="none">
+        <polyline points="0,8 0,0 8,0" stroke="#00e5ff" stroke-width=".8" fill="none" opacity=".5"/>
+        <polyline points="92,0 100,0 100,8" stroke="#00e5ff" stroke-width=".8" fill="none" opacity=".5"/>
+        <polyline points="0,67 0,75 8,75" stroke="#00e5ff" stroke-width=".8" fill="none" opacity=".5"/>
+        <polyline points="92,75 100,75 100,67" stroke="#00e5ff" stroke-width=".8" fill="none" opacity=".5"/>
+        <line x1="47" y1="37" x2="53" y2="37" stroke="#00e5ff" stroke-width=".5" opacity=".35"/>
+        <line x1="50" y1="34" x2="50" y2="40" stroke="#00e5ff" stroke-width=".5" opacity=".35"/>
+      </svg></div>
+      <div id="scanline"></div>
+      <div id="frame-badge">0 frames</div>
+    </div>
+    <div class="brow">
+      <button class="btn pri" id="btn-cam">▶ CAMÉRA</button>
+      <button class="btn" id="btn-cap" disabled>⬤ CAPTURE</button>
+    </div>
+    <div class="brow">
+      <button class="btn" id="btn-auto" disabled>⏱ AUTO</button>
+      <button class="btn danger" id="btn-stop" disabled>■ STOP</button>
+    </div>
+  </div>
+
+  <!-- Images -->
+  <div class="sec">
+    <div class="sec-title">Images</div>
+    <div id="drop" onclick="document.getElementById('file-in').click()">
+      ↓ GLISSER DES IMAGES ICI<br>
+      <span style="font-size:8px;opacity:.5">ou cliquer • JPG / PNG</span>
+    </div>
+    <input type="file" id="file-in" multiple accept="image/*"/>
+    <div id="thumbs"></div>
+    <div style="margin-top:7px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-family:var(--font);font-size:9px;color:var(--muted)">
+        <span id="img-count">0</span> images
+      </span>
+      <button class="btn danger" style="width:auto;padding:3px 9px;font-size:9px" onclick="clearImages()">✕ VIDER</button>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div class="sec">
+    <div class="sec-title">Paramètres</div>
+    <div class="field">
+      <div class="frow">
+        <label>Voxel Size (m)</label>
+        <span class="val" id="vox-val">0.020</span>
+      </div>
+      <input type="range" id="vox" min="0.005" max="0.08" step="0.005" value="0.02"
+        oninput="document.getElementById('vox-val').textContent=parseFloat(this.value).toFixed(3)"/>
+    </div>
+    <div class="field">
+      <label>Format d'export</label>
+      <select id="fmt">
+        <option value="ply">PLY — binaire (viewer 3D)</option>
+        <option value="xyz">XYZ — ASCII RGB (GIS / CAD)</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Reconstruct -->
+  <div class="sec">
+    <div class="sec-title">Reconstruction</div>
+    <button class="btn pri" id="btn-rec" onclick="startRec()">⬡ GÉNÉRER LE NUAGE DE POINTS</button>
+    <div id="prog-wrap">
+      <div class="pbar-bg" style="margin-top:8px"><div id="pbar"></div></div>
+      <div id="plabel">INITIALISATION...</div>
+    </div>
+    <div id="stats-grid" style="margin-top:10px" class="fi">
+      <div class="sc"><div class="sl">Points</div><div class="sv" id="s-pts">—</div></div>
+      <div class="sc"><div class="sl">W×D×H (m)</div><div class="sv g" id="s-bb">—</div></div>
+    </div>
+    <button class="btn success" id="btn-dl" style="margin-top:8px;display:none" onclick="dlResult()">↓ TÉLÉCHARGER</button>
+  </div>
+
+  <!-- Log -->
+  <div class="sec" style="flex:1">
+    <div class="sec-title">Log</div>
+    <div id="logbox"></div>
+  </div>
+
+</div><!-- /side -->
+
+<!-- 3D VIEWPORT -->
+<div id="vp">
+  <canvas id="cv"></canvas>
+
+  <div id="hint">
+    <svg class="hicon" viewBox="0 0 72 72" fill="none" stroke="#00e5ff" stroke-width="1">
+      <polygon points="36,4 68,22 68,50 36,68 4,50 4,22"/>
+      <line x1="36" y1="4" x2="36" y2="68"/>
+      <line x1="4" y1="22" x2="68" y2="50"/>
+      <line x1="4" y1="50" x2="68" y2="22"/>
+    </svg>
+    <div class="htxt">Aucun nuage de points</div>
+    <div class="hsub">CHARGER DES IMAGES → RECONSTRUIRE</div>
+  </div>
+
+  <div class="hud" id="htl">
+    <div class="hline">MODE: <span class="hv" id="h-mode">ORBITE</span></div>
+    <div class="hline">PTS: <span class="hv" id="h-pts">—</span></div>
+  </div>
+  <div class="hud" id="htr">
+    <div class="hline"><span class="hv" id="h-fps">—</span> FPS</div>
+  </div>
+  <div class="hud" id="hbl">
+    <div class="hline" style="opacity:.3">DRAG: rotation • SCROLL: zoom • CLIC DROIT: pan</div>
+  </div>
+
+  <div id="vtb">
+    <button class="tb on" id="tb-col" onclick="setMode('col')">COULEUR</button>
+    <button class="tb" id="tb-pts" onclick="setMode('pts')">MONO</button>
+    <button class="tb" onclick="resetCam()">RESET</button>
+    <button class="tb" id="tb-grid" onclick="toggleGrid()">GRILLE</button>
+  </div>
+</div>
+
+<!-- STATUS BAR -->
+<div id="sb">
+  <div class="si" id="sb-api"><div class="d"></div><span>API</span></div>
+  <div class="si" id="sb-cam"><div class="d"></div><span>CAMÉRA</span></div>
+  <div class="si" id="sb-img"><div class="d"></div><span id="sb-img-t">0 IMAGES</span></div>
+  <div style="margin-left:auto;opacity:.25">SCAN3D MVP // open-source // LiDAR-ready</div>
+</div>
+
+</div><!-- /app -->
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  AUTO-DETECT API URL (works locally AND in GitHub Codespaces)
+// ═══════════════════════════════════════════════════════════════
+function getApiBase() {
+  const host = window.location.hostname;
+  const port = window.location.port;
+
+  // GitHub Codespaces: hostname = XXXXX-3000.app.github.dev
+  // → replace port 3000 with 8000 in the hostname
+  if (host.includes('.app.github.dev') || host.includes('.preview.app.github.dev')) {
+    // e.g. "solid-space-abc123-3000.app.github.dev" → "...-8000.app.github.dev"
+    const apiHost = host.replace(/-3000\./, '-8000.');
+    return `https://${apiHost}`;
+  }
+
+  // Gitpod
+  if (host.includes('.gitpod.io')) {
+    const apiHost = host.replace(/^[^-]+-/, '8000-');
+    return `https://${apiHost}`;
+  }
+
+  // Local development
+  return 'http://localhost:8000';
+}
+
+const API = getApiBase();
+console.log('API base:', API);
+
+// ═══════════════════════════════════════════════════════════════
+//  LOGGING
+// ═══════════════════════════════════════════════════════════════
+function lg(msg, type='') {
+  const box = document.getElementById('logbox');
+  const t   = new Date().toLocaleTimeString('fr',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const cls = {ok:'lok',warn:'lwarn',err:'lerr',info:'linfo'}[type]||'';
+  box.innerHTML += `<div class="${cls}">[${t}] ${msg}</div>`;
+  box.scrollTop  = 9999;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  API HEALTH CHECK
+// ═══════════════════════════════════════════════════════════════
+async function checkApi() {
+  try {
+    const r = await fetch(`${API}/health`, {signal: AbortSignal.timeout(4000)});
+    if (r.ok) {
+      document.getElementById('apidot').className = 'dot ok';
+      document.getElementById('apistat').textContent = 'API CONNECTÉE';
+      document.getElementById('sb-api').className = 'si ok';
+      lg('Backend connecté — ' + API, 'ok');
+      return true;
+    }
+  } catch {}
+  document.getElementById('apidot').className = 'dot err';
+  document.getElementById('apistat').textContent = 'API HORS LIGNE';
+  lg('Backend inaccessible → lancez: bash start_backend.sh', 'err');
+  return false;
+}
+checkApi();
+setInterval(checkApi, 20000);
+
+// ═══════════════════════════════════════════════════════════════
+//  CAMERA
+// ═══════════════════════════════════════════════════════════════
+let stream = null, autoTimer = null;
+
+document.getElementById('btn-cam').addEventListener('click', async () => {
+  if (stream) {
+    stream.getTracks().forEach(t=>t.stop());
+    stream = null;
+    document.getElementById('video').srcObject = null;
+    document.getElementById('cam-ph').style.display = 'flex';
+    document.getElementById('scanline').style.display = 'none';
+    document.getElementById('btn-cam').textContent = '▶ CAMÉRA';
+    document.getElementById('btn-cap').disabled = true;
+    document.getElementById('btn-auto').disabled = true;
+    document.getElementById('sb-cam').className = 'si';
+    lg('Caméra arrêtée','warn'); return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:'environment',width:{ideal:1920},height:{ideal:1080}},audio:false
+    });
+    const v = document.getElementById('video');
+    v.srcObject = stream; await v.play();
+    document.getElementById('cam-ph').style.display = 'none';
+    document.getElementById('scanline').style.display = 'block';
+    document.getElementById('btn-cam').textContent = '◼ STOP';
+    document.getElementById('btn-cap').disabled = false;
+    document.getElementById('btn-auto').disabled = false;
+    document.getElementById('sb-cam').className = 'si ok';
+    lg('Caméra démarrée — '+stream.getVideoTracks()[0].label,'ok');
+  } catch(e) { lg('Erreur caméra: '+e.message,'err'); }
+});
+
+document.getElementById('btn-cap').addEventListener('click', capture);
+
+function capture() {
+  const v = document.getElementById('video');
+  if (!v.srcObject) return;
+  const c = document.createElement('canvas');
+  c.width=v.videoWidth; c.height=v.videoHeight;
+  c.getContext('2d').drawImage(v,0,0);
+  c.toBlob(b => {
+    addFile(new File([b],`frame_${Date.now()}.jpg`,{type:'image/jpeg'}));
+    // Flash effect
+    const w = document.getElementById('cam-wrap');
+    w.style.outline = '2px solid var(--acc)';
+    setTimeout(()=>w.style.outline='',180);
+  },'image/jpeg',0.92);
+}
+
+document.getElementById('btn-auto').addEventListener('click', () => {
+  if (autoTimer) return;
+  capture();
+  autoTimer = setInterval(capture, 1500);
+  document.getElementById('btn-auto').disabled = true;
+  document.getElementById('btn-stop').disabled = false;
+  document.getElementById('btn-auto').textContent = '⏱ EN COURS...';
+  lg('Auto-capture démarrée (1.5s)','info');
+});
+document.getElementById('btn-stop').addEventListener('click', () => {
+  clearInterval(autoTimer); autoTimer = null;
+  document.getElementById('btn-auto').disabled = false;
+  document.getElementById('btn-stop').disabled = true;
+  document.getElementById('btn-auto').textContent = '⏱ AUTO';
+  lg('Auto-capture arrêtée','warn');
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  IMAGE MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+let files = [];
+
+const drop = document.getElementById('drop');
+drop.addEventListener('dragover',  e=>{e.preventDefault();drop.classList.add('over')});
+drop.addEventListener('dragleave', ()=>drop.classList.remove('over'));
+drop.addEventListener('drop', e=>{
+  e.preventDefault(); drop.classList.remove('over');
+  [...e.dataTransfer.files].filter(f=>f.type.startsWith('image/')).forEach(addFile);
+});
+document.getElementById('file-in').addEventListener('change', e=>{
+  [...e.target.files].forEach(addFile); e.target.value='';
+});
+
+function addFile(f) {
+  if (files.find(x=>x.name===f.name&&x.size===f.size)) return;
+  files.push(f);
+  const idx = files.length-1;
+  const g   = document.getElementById('thumbs');
+  const d   = document.createElement('div');
+  d.className='thumb fi'; d.id=`th-${idx}`;
+  const img = document.createElement('img');
+  img.src = URL.createObjectURL(f);
+  const del = document.createElement('button');
+  del.className='tdel'; del.textContent='✕';
+  del.onclick = () => removeFile(idx);
+  d.appendChild(img); d.appendChild(del);
+  g.appendChild(d);
+  updateCount();
+}
+
+function removeFile(idx) {
+  files.splice(idx,1);
+  const g = document.getElementById('thumbs');
+  g.innerHTML='';
+  files.forEach((f,i)=>{
+    const d=document.createElement('div'); d.className='thumb'; d.id=`th-${i}`;
+    const img=document.createElement('img'); img.src=URL.createObjectURL(f);
+    const del=document.createElement('button'); del.className='tdel'; del.textContent='✕';
+    del.onclick=()=>removeFile(i);
+    d.appendChild(img); d.appendChild(del); g.appendChild(d);
+  });
+  updateCount();
+}
+
+function clearImages() {
+  files=[]; document.getElementById('thumbs').innerHTML='';
+  updateCount(); lg('Images vidées','warn');
+}
+
+function updateCount() {
+  const n=files.length;
+  document.getElementById('img-count').textContent=n;
+  document.getElementById('sb-img-t').textContent=n+' IMAGES';
+  document.getElementById('sb-img').className = n>=2?'si ok':'si';
+  document.getElementById('frame-badge').textContent=n+' frames';
+  document.getElementById('frame-badge').style.display=n>0?'block':'none';
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RECONSTRUCTION
+// ═══════════════════════════════════════════════════════════════
+let dlUrl = null;
+
+async function startRec() {
+  if (files.length < 2) { lg('Minimum 2 images requises','err'); return; }
+  document.getElementById('btn-rec').disabled = true;
+  document.getElementById('prog-wrap').style.display = 'block';
+  document.getElementById('btn-dl').style.display = 'none';
+  document.getElementById('stats-grid').style.display = 'none';
+  setP(0,'UPLOAD EN COURS...');
+  lg(`Envoi de ${files.length} images...`,'info');
+
+  const fd = new FormData();
+  files.forEach(f=>fd.append('files',f));
+  fd.append('voxel_size', document.getElementById('vox').value);
+  fd.append('export_format', document.getElementById('fmt').value);
+
+  try {
+    const r = await fetch(`${API}/reconstruct`, {method:'POST',body:fd});
+    if (!r.ok) throw new Error(await r.text());
+    const {job_id} = await r.json();
+    lg(`Job ${job_id} démarré`,'ok');
+    poll(job_id);
+  } catch(e) {
+    lg('Erreur upload: '+e.message,'err');
+    setP(0,'ERREUR');
+    document.getElementById('btn-rec').disabled=false;
+  }
+}
+
+function poll(id) {
+  const iv = setInterval(async ()=>{
+    try {
+      const job = await (await fetch(`${API}/jobs/${id}`)).json();
+      setP(job.progress||0, label(job.progress));
+      if (job.status==='done') {
+        clearInterval(iv);
+        dlUrl = API + job.download_url;
+        setP(100,'TERMINÉ ✓');
+        showStats(job.stats);
+        lg(`✓ ${(job.stats?.num_points||0).toLocaleString()} points générés`,'ok');
+        document.getElementById('btn-dl').style.display='block';
+        document.getElementById('btn-rec').disabled=false;
+        loadCloud(dlUrl, job.stats);
+      } else if (job.status==='error') {
+        clearInterval(iv);
+        lg('Erreur pipeline: '+(job.error||'?'),'err');
+        setP(0,'ERREUR — '+(job.error||'').slice(0,50));
+        document.getElementById('btn-rec').disabled=false;
+      }
+    } catch(e) { clearInterval(iv); lg('Erreur polling: '+e.message,'err'); }
+  }, 900);
+}
+
+function label(p) {
+  if(!p||p<=10) return 'CHARGEMENT DES IMAGES...';
+  if(p<=20)  return 'CALIBRATION INTRINSÈQUE...';
+  if(p<=40)  return 'EXTRACTION FEATURES ORB...';
+  if(p<=75)  return 'TRIANGULATION 3D...';
+  if(p<=90)  return 'NETTOYAGE DU NUAGE...';
+  if(p<=99)  return 'EXPORT PLY...';
+  return 'TERMINÉ ✓';
+}
+
+function setP(p, txt) {
+  document.getElementById('pbar').style.width=p+'%';
+  document.getElementById('plabel').textContent=txt;
+}
+
+function showStats(s) {
+  if (!s) return;
+  document.getElementById('stats-grid').style.display='grid';
+  document.getElementById('s-pts').textContent=(s.num_points||0).toLocaleString();
+  const b=s.bbox_m||{};
+  document.getElementById('s-bb').textContent=b.width?`${b.width}×${b.depth}×${b.height}`:'—';
+}
+
+function dlResult() {
+  if (!dlUrl) return;
+  Object.assign(document.createElement('a'),{href:dlUrl,download:''}).click();
+  lg('Téléchargement démarré','ok');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  THREE.JS VIEWER
+// ═══════════════════════════════════════════════════════════════
+let scene, cam, renderer, cloud, grid;
+let orb={isDown:false,btn:0,lx:0,ly:0,sph:{th:0.6,ph:1.1,r:5},tgt:new THREE.Vector3()};
+let fc=0, ft=performance.now(), vmode='col';
+
+function initThree() {
+  const cv = document.getElementById('cv');
+  renderer = new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setClearColor(0,0);
+  scene = new THREE.Scene();
+  cam   = new THREE.PerspectiveCamera(55,1,0.001,2000);
+  cam.position.set(2,1.5,3);
+  cam.lookAt(0,0,0);
+  grid = new THREE.GridHelper(10,20,0x1a2f47,0x1a2f47);
+  grid.visible=false; scene.add(grid);
+  setupOC(); animate(); window.addEventListener('resize',onR); onR();
+}
+
+function setupOC() {
+  const el = renderer.domElement;
+  el.addEventListener('pointerdown',e=>{orb.isDown=true;orb.btn=e.button;orb.lx=e.clientX;orb.ly=e.clientY});
+  el.addEventListener('pointerup',  ()=>orb.isDown=false);
+  el.addEventListener('pointermove',e=>{
+    if(!orb.isDown) return;
+    const dx=e.clientX-orb.lx, dy=e.clientY-orb.ly;
+    orb.lx=e.clientX; orb.ly=e.clientY;
+    if(orb.btn===0){
+      orb.sph.th -= dx*0.008;
+      orb.sph.ph  = Math.max(0.05,Math.min(Math.PI-0.05, orb.sph.ph-dy*0.008));
+    } else if(orb.btn===2) {
+      const r=new THREE.Vector3();
+      r.crossVectors(cam.getWorldDirection(new THREE.Vector3()),cam.up).normalize();
+      const sp=orb.sph.r*0.001;
+      orb.tgt.addScaledVector(r,-dx*sp);
+      orb.tgt.addScaledVector(cam.up,dy*sp);
+    }
+    updateCam();
+  });
+  el.addEventListener('wheel',e=>{
+    orb.sph.r=Math.max(0.05,Math.min(1000,orb.sph.r*(1+e.deltaY*0.001)));
+    updateCam();
+  });
+  el.addEventListener('contextmenu',e=>e.preventDefault());
+}
+
+function updateCam() {
+  const {th,ph,r}=orb.sph;
+  cam.position.set(
+    orb.tgt.x+r*Math.sin(ph)*Math.sin(th),
+    orb.tgt.y+r*Math.cos(ph),
+    orb.tgt.z+r*Math.sin(ph)*Math.cos(th)
+  );
+  cam.lookAt(orb.tgt);
+}
+
+function resetCam() {
+  orb.sph={th:0.6,ph:1.1,r:5}; orb.tgt.set(0,0,0); updateCam();
+}
+
+function toggleGrid() {
+  grid.visible=!grid.visible;
+  document.getElementById('tb-grid').classList.toggle('on',grid.visible);
+}
+
+function onR() {
+  const vp=document.getElementById('vp');
+  renderer.setSize(vp.clientWidth,vp.clientHeight);
+  cam.aspect=vp.clientWidth/vp.clientHeight;
+  cam.updateProjectionMatrix();
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  renderer.render(scene,cam);
+  fc++;
+  const now=performance.now();
+  if(now-ft>600){
+    document.getElementById('h-fps').textContent=Math.round(fc*1000/(now-ft));
+    fc=0; ft=now;
+  }
+}
+
+// ── Load PLY ─────────────────────────────────────────────────
+async function loadCloud(url, stats) {
+  lg('Chargement dans le viewer...','info');
+  try {
+    const buf = await (await fetch(url)).arrayBuffer();
+    const pcd = parsePLY(buf);
+    displayCloud(pcd);
+    document.getElementById('hint').style.display='none';
+    lg(`Viewer: ${pcd.n.toLocaleString()} points rendus`,'ok');
+  } catch(e) { lg('Erreur viewer: '+e.message,'err'); }
+}
+
+function parsePLY(buf) {
+  const head = new TextDecoder().decode(new Uint8Array(buf,0,600));
+  const lines = head.split('\n');
+  const n     = parseInt(lines.find(l=>l.startsWith('element vertex'))?.split(' ')[2]||'0');
+  const hend  = head.indexOf('end_header\n')+11;
+  const bin   = head.includes('binary_little_endian');
+  const hasC  = head.includes('property uchar red');
+  const pos   = new Float32Array(n*3);
+  const col   = new Float32Array(n*3);
+
+  if (bin) {
+    const dv = new DataView(buf,hend);
+    const stride = hasC?15:12;
+    for(let i=0;i<n;i++){
+      const o=i*stride;
+      pos[i*3]=dv.getFloat32(o,true);
+      pos[i*3+1]=dv.getFloat32(o+4,true);
+      pos[i*3+2]=dv.getFloat32(o+8,true);
+      if(hasC){col[i*3]=dv.getUint8(o+12)/255;col[i*3+1]=dv.getUint8(o+13)/255;col[i*3+2]=dv.getUint8(o+14)/255}
+      else{col[i*3]=0;col[i*3+1]=0.7;col[i*3+2]=1}
+    }
+  } else {
+    const txt=new TextDecoder().decode(new Uint8Array(buf)).slice(hend).trim().split('\n');
+    for(let i=0;i<Math.min(n,txt.length);i++){
+      const p=txt[i].trim().split(/\s+/);
+      pos[i*3]=+p[0];pos[i*3+1]=+p[1];pos[i*3+2]=+p[2];
+      col[i*3]=p[3]?+p[3]/255:0;col[i*3+1]=p[4]?+p[4]/255:0.7;col[i*3+2]=p[5]?+p[5]/255:1;
+    }
+  }
+  return {pos,col,n};
+}
+
+function displayCloud({pos,col,n}) {
+  if(cloud){scene.remove(cloud);cloud.geometry.dispose();cloud.material.dispose()}
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  geo.setAttribute('color',   new THREE.BufferAttribute(col,3));
+  geo.computeBoundingSphere();
+  geo.computeBoundingBox();
+  const ctr=new THREE.Vector3();
+  geo.boundingBox.getCenter(ctr);
+  geo.translate(-ctr.x,-ctr.y,-ctr.z);
+  const mat=new THREE.PointsMaterial({size:.015,vertexColors:true,sizeAttenuation:true});
+  cloud=new THREE.Points(geo,mat);
+  scene.add(cloud);
+  const r=geo.boundingSphere.radius||2;
+  orb.sph.r=r*2.5; orb.tgt.set(0,0,0); updateCam();
+  grid.scale.set(r*2,1,r*2);
+  document.getElementById('h-pts').textContent=n.toLocaleString();
+}
+
+function setMode(m) {
+  vmode=m;
+  ['col','pts'].forEach(x=>document.getElementById('tb-'+x).classList.toggle('on',x===m));
+  if(!cloud) return;
+  if(m==='pts'){
+    cloud.material.vertexColors=false;
+    cloud.material.color=new THREE.Color(0x00e5ff);
+    cloud.material.size=0.02;
+  } else {
+    cloud.material.vertexColors=true;
+    cloud.material.size=0.015;
+  }
+  cloud.material.needsUpdate=true;
+}
+
+initThree();
+lg('SCAN3D initialisé — API: '+API,'ok');
+</script>
+</body>
+</html>

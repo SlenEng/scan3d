@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+venv/
+.env
+backend/uploads/
+backend/outputs/
+*.ply
+*.xyz
+*.las
+.DS_Store
+*.log

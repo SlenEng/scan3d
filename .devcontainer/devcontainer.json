@@ -1,0 +1,37 @@
+{
+  "name": "SCAN3D Point Cloud MVP",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11-bullseye",
+
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+
+  "forwardPorts": [8000, 3000],
+  "portsAttributes": {
+    "8000": {
+      "label": "Backend API",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    },
+    "3000": {
+      "label": "Frontend App",
+      "onAutoForward": "openBrowser",
+      "visibility": "public"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ritwickdey.LiveServer",
+        "humao.rest-client"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/workspaces/scan3d/venv/bin/python",
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  },
+
+  "remoteUser": "vscode"
+}
